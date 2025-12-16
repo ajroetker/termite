@@ -15,10 +15,9 @@ package cmd
 
 import (
 	"context"
-	"net/http"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
-	"time"
 
 	"github.com/antflydb/antfly-go/libaf/healthserver"
 	"github.com/antflydb/antfly-go/libaf/logging"
@@ -78,30 +77,21 @@ func runServer(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Start health server with ready checker that queries termite's /readyz
-	termiteURL := cfg.ApiUrl
-	if termiteURL == "" {
-		termiteURL = "http://localhost:11433"
-	}
-	readyChecker := makeTermiteReadyChecker(termiteURL)
-	healthserver.Start(logger, viper.GetInt("health_port"), readyChecker)
+	// Track readiness state
+	ready := &atomic.Bool{}
+	ready.Store(false)
+	readyC := make(chan struct{})
 
-	termite.RunAsTermite(ctx, logger, cfg)
+	// Start health server with readiness checker
+	healthserver.Start(logger, viper.GetInt("health_port"), ready.Load)
+
+	// Wait for ready signal in background
+	go func() {
+		<-readyC
+		ready.Store(true)
+		logger.Info("Termite is ready")
+	}()
+
+	termite.RunAsTermite(ctx, logger, cfg, readyC)
 	return nil
-}
-
-// makeTermiteReadyChecker returns a function that checks termite's readiness
-// by querying its /readyz endpoint.
-func makeTermiteReadyChecker(termiteURL string) func() bool {
-	client := &http.Client{
-		Timeout: 2 * time.Second,
-	}
-	return func() bool {
-		resp, err := client.Get(termiteURL + "/readyz")
-		if err != nil {
-			return false
-		}
-		defer func() { _ = resp.Body.Close() }()
-		return resp.StatusCode == http.StatusOK
-	}
 }

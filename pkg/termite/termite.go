@@ -84,8 +84,9 @@ func corsMiddleware(next http.Handler) http.Handler {
 // DefaultShutdownTimeout is the default time to wait for graceful shutdown
 const DefaultShutdownTimeout = 30 * time.Second
 
-// RunAsTermite implements a leader node that monitors and manages the cluster
-func RunAsTermite(ctx context.Context, zl *zap.Logger, config Config) {
+// RunAsTermite implements a leader node that monitors and manages the cluster.
+// If readyC is non-nil, it will be closed when the server is ready to accept requests.
+func RunAsTermite(ctx context.Context, zl *zap.Logger, config Config, readyC chan struct{}) {
 	zl = zl.Named("termite")
 	zl.Info("Starting termite node", zap.Any("config", config))
 
@@ -327,6 +328,11 @@ func RunAsTermite(ctx context.Context, zl *zap.Logger, config Config) {
 		}
 		close(serverErr)
 	}()
+
+	// Signal readiness after server starts
+	if readyC != nil {
+		close(readyC)
+	}
 
 	// Wait for context cancellation or server error
 	select {

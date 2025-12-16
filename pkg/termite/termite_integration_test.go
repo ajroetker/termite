@@ -158,7 +158,7 @@ func TestRunAsTermite(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		RunAsTermite(ctx, logger, config)
+		RunAsTermite(ctx, logger, config, nil)
 	}()
 
 	// Give it time to start
