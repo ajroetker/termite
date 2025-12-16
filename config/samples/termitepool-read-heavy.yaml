@@ -1,0 +1,100 @@
+# Read-Heavy Pool Example
+#
+# Optimized for:
+# - Low latency embedding generation for search
+# - Reranking query results
+# - CLIP multimodal queries
+#
+# Characteristics:
+# - Always available (min 2 replicas)
+# - Slow scale-down (models expensive to reload)
+# - TPU 2x2 topology for balanced performance
+# - No spot instances (production traffic)
+
+apiVersion: antfly.io/v1alpha1
+kind: TermitePool
+metadata:
+  name: read-heavy-embedders
+  namespace: termite-operator-namespace
+spec:
+  workloadType: read-heavy
+
+  # Container image (uses operator default if not specified)
+  image: ghcr.io/antflydb/termite:xla-tpu
+
+  models:
+    preload:
+      - name: bge-small-en-v1.5
+        priority: high        # Always loaded, never evicted
+      - name: mxbai-rerank-base-v2
+        variant: quantized    # Use quantized for speed
+        priority: high
+      - name: clip-vit-base-patch32
+        priority: medium      # For image search
+    loadingStrategy: eager    # Load all at startup
+    registryURL: "https://registry.antfly.io/v1"
+
+  replicas:
+    min: 2                    # Always available
+    max: 8
+    perModel:
+      bge-small-en-v1.5:
+        min: 2                # Critical model, ensure redundancy
+
+  hardware:
+    accelerator: tpu-v5-lite-podslice
+    topology: "2x2"
+    machineType: ct5lp-hightpu-4t
+    spot: false               # Don't use spot for production traffic
+
+  autoscaling:
+    enabled: true
+    metrics:
+      - type: latency-p99
+        target: "100ms"       # Scale up if P99 > 100ms
+        endpoint: /api/embed
+        scaleUp:
+          stabilizationWindow: "30s"
+          policies:
+            - type: Pods
+              value: 2
+              periodSeconds: 60
+        scaleDown:
+          stabilizationWindow: "300s"  # 5 min - don't scale down quickly
+      - type: queue-depth
+        target: "10"
+        scaleUp:
+          stabilizationWindow: "15s"
+    modelLoadingGracePeriod: "120s"
+    warmupReplicas: 1
+
+  resources:
+    requests:
+      memory: "8Gi"
+      cpu: "2"
+      google.com/tpu: "4"
+    limits:
+      memory: "16Gi"
+      cpu: "4"
+      google.com/tpu: "4"
+
+  availability:
+    podDisruptionBudget:
+      minAvailable: 1
+    startupProbe:
+      failureThreshold: 30    # 5 min for model loading
+      periodSeconds: 10
+    readinessProbe:
+      periodSeconds: 5
+      timeoutSeconds: 3
+    livenessProbe:
+      periodSeconds: 30
+      timeoutSeconds: 10
+
+  routing:
+    weight: 100
+    drainTimeout: "30s"
+    circuitBreaker:
+      enabled: true
+      errorThreshold: 5
+      timeout: "30s"

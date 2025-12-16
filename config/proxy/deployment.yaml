@@ -1,0 +1,92 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: termite-proxy
+  namespace: termite-operator-namespace
+  labels:
+    app.kubernetes.io/name: termite-proxy
+    app.kubernetes.io/component: proxy
+    app.kubernetes.io/part-of: termite-operator
+    app.kubernetes.io/managed-by: termite-operator
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: termite-proxy
+      app.kubernetes.io/component: proxy
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: termite-proxy
+        app.kubernetes.io/component: proxy
+        app.kubernetes.io/part-of: termite-operator
+        app.kubernetes.io/managed-by: termite-operator
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "4200"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: termite-proxy-service-account
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: proxy
+        image: ghcr.io/antflydb/termite-proxy:latest
+        imagePullPolicy: Always
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+        env:
+        # Server configuration
+        - name: TERMITE_PROXY_LISTEN
+          value: ":8080"
+        - name: TERMITE_PROXY_HEALTH_PORT
+          value: "4200"
+        # Routing configuration
+        - name: TERMITE_PROXY_DEFAULT_POOL
+          value: "read-heavy-embedders"
+        - name: TERMITE_PROXY_REFRESH_INTERVAL
+          value: "10s"
+        # Kubernetes discovery
+        - name: TERMITE_PROXY_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: TERMITE_PROXY_SELECTOR
+          value: "app.kubernetes.io/name=termite"
+        ports:
+        - name: http
+          containerPort: 8080
+          protocol: TCP
+        - name: health
+          containerPort: 4200
+          protocol: TCP
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: health
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: health
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 2
+      terminationGracePeriodSeconds: 30

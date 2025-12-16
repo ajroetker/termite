@@ -1,0 +1,212 @@
+# Prometheus ServiceMonitor and Grafana Dashboard
+#
+# This file configures monitoring for Termite components:
+#   - ServiceMonitor for Prometheus scraping
+#   - Grafana dashboard ConfigMap
+#
+# Prerequisites:
+#   - Prometheus Operator installed (for ServiceMonitor)
+#   - Grafana with sidecar enabled (for dashboard auto-import)
+#
+# Optional: Only apply if using Prometheus/Grafana for monitoring.
+#
+---
+# =============================================================================
+# PROMETHEUS SERVICE MONITOR
+# =============================================================================
+# Scrapes metrics from termite-proxy
+
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: termite-proxy
+  namespace: termite-operator-namespace
+  labels:
+    app.kubernetes.io/name: termite-proxy
+    app.kubernetes.io/component: monitoring
+    # Match your Prometheus operator's serviceMonitorSelector
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: termite-proxy
+  namespaceSelector:
+    matchNames:
+      - termite-operator-namespace
+  endpoints:
+    - port: health
+      interval: 15s
+      path: /metrics
+
+---
+# =============================================================================
+# GRAFANA DASHBOARD CONFIGMAP
+# =============================================================================
+# Auto-imported by Grafana sidecar when labeled correctly
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: termite-dashboard
+  namespace: termite-operator-namespace
+  labels:
+    app.kubernetes.io/name: termite
+    app.kubernetes.io/component: monitoring
+    # Label for Grafana sidecar to auto-import
+    grafana_dashboard: "1"
+data:
+  termite-dashboard.json: |
+    {
+      "annotations": {
+        "list": []
+      },
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 0,
+      "id": null,
+      "links": [],
+      "liveNow": false,
+      "panels": [
+        {
+          "title": "Request Rate by Pool",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+          "targets": [
+            {
+              "expr": "sum(rate(termite_proxy_requests_total[5m])) by (pool)",
+              "legendFormat": "{{pool}}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps"
+            }
+          }
+        },
+        {
+          "title": "Queue Depth by Pool",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+          "targets": [
+            {
+              "expr": "termite_proxy_queue_depth",
+              "legendFormat": "{{pool}}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "steps": [
+                  {"color": "green", "value": null},
+                  {"color": "yellow", "value": 10},
+                  {"color": "red", "value": 50}
+                ]
+              }
+            }
+          }
+        },
+        {
+          "title": "P99 Latency by Pool",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.99, sum(rate(termite_proxy_request_duration_seconds_bucket[5m])) by (pool, le))",
+              "legendFormat": "{{pool}}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "thresholds": {
+                "steps": [
+                  {"color": "green", "value": null},
+                  {"color": "yellow", "value": 0.1},
+                  {"color": "red", "value": 0.5}
+                ]
+              }
+            }
+          }
+        },
+        {
+          "title": "Endpoint Health",
+          "type": "stat",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+          "targets": [
+            {
+              "expr": "sum(termite_proxy_endpoint_healthy) by (pool)",
+              "legendFormat": "{{pool}}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "steps": [
+                  {"color": "red", "value": 0},
+                  {"color": "yellow", "value": 1},
+                  {"color": "green", "value": 2}
+                ]
+              }
+            }
+          }
+        },
+        {
+          "title": "Model Distribution by Pool",
+          "type": "table",
+          "gridPos": {"h": 8, "w": 24, "x": 0, "y": 16},
+          "targets": [
+            {
+              "expr": "sum(termite_proxy_model_loaded) by (pool, model)",
+              "format": "table",
+              "instant": true
+            }
+          ],
+          "transformations": [
+            {"id": "organize", "options": {"excludeByName": {"Time": true}}}
+          ]
+        },
+        {
+          "title": "Error Rate by Pool",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24},
+          "targets": [
+            {
+              "expr": "sum(rate(termite_proxy_errors_total[5m])) by (pool, error_type)",
+              "legendFormat": "{{pool}} - {{error_type}}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps"
+            }
+          }
+        },
+        {
+          "title": "Active Connections",
+          "type": "stat",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24},
+          "targets": [
+            {
+              "expr": "sum(termite_proxy_active_connections)",
+              "legendFormat": "Total"
+            }
+          ]
+        }
+      ],
+      "schemaVersion": 38,
+      "style": "dark",
+      "tags": ["termite", "ml-inference", "tpu"],
+      "templating": {
+        "list": []
+      },
+      "time": {
+        "from": "now-1h",
+        "to": "now"
+      },
+      "timepicker": {},
+      "timezone": "",
+      "title": "Termite TPU Routing",
+      "uid": "termite-tpu-routing",
+      "version": 1,
+      "weekStart": ""
+    }

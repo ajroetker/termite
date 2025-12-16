@@ -1,0 +1,8 @@
+go 1.25
+
+use (
+	./pkg/client
+	./pkg/operator
+	./pkg/proxy
+	./pkg/termite
+)

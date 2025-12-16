@@ -1,0 +1,44 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: termite-proxy
+  namespace: termite-operator-namespace
+  labels:
+    app.kubernetes.io/name: termite-proxy
+    app.kubernetes.io/component: proxy
+    app.kubernetes.io/part-of: termite-operator
+    app.kubernetes.io/managed-by: termite-operator
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: termite-proxy
+  ports:
+  - name: http
+    port: 80
+    targetPort: http
+  - name: health
+    port: 4200
+    targetPort: health
+---
+# External LoadBalancer for Antfly cluster access
+apiVersion: v1
+kind: Service
+metadata:
+  name: termite-proxy-lb
+  namespace: termite-operator-namespace
+  labels:
+    app.kubernetes.io/name: termite-proxy
+    app.kubernetes.io/component: proxy
+    app.kubernetes.io/part-of: termite-operator
+    app.kubernetes.io/managed-by: termite-operator
+  annotations:
+    # GKE-specific: uncomment for internal load balancer
+    # networking.gke.io/load-balancer-type: "Internal"
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/name: termite-proxy
+  ports:
+  - name: http
+    port: 11433
+    targetPort: http

@@ -1,0 +1,91 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: termite-operator
+  namespace: termite-operator-namespace
+  labels:
+    app.kubernetes.io/name: termite-operator
+    app.kubernetes.io/component: controller
+    app.kubernetes.io/part-of: termite-operator
+    app.kubernetes.io/managed-by: termite-operator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: termite-operator
+      app.kubernetes.io/component: controller
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: termite-operator
+        app.kubernetes.io/component: controller
+        app.kubernetes.io/part-of: termite-operator
+        app.kubernetes.io/managed-by: termite-operator
+      annotations:
+        kubectl.kubernetes.io/default-container: termite-operator-manager
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: termite-operator-service-account
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: termite-operator-manager
+        image: ghcr.io/antflydb/termite-operator:latest
+        imagePullPolicy: Always
+        env:
+        # Metrics and health probe addresses
+        - name: TERMITE_OPERATOR_METRICS_BIND_ADDRESS
+          value: ":8080"
+        - name: TERMITE_OPERATOR_HEALTH_PROBE_BIND_ADDRESS
+          value: ":8081"
+        # Enable leader election for HA deployments
+        - name: TERMITE_OPERATOR_LEADER_ELECT
+          value: "true"
+        # Default Termite image for TermitePools
+        # Can be overridden per-pool in TermitePool.spec.image
+        - name: TERMITE_OPERATOR_TERMITE_IMAGE
+          value: "ghcr.io/antflydb/termite:xla-tpu"
+        # Debug logging (set to "true" for development)
+        - name: TERMITE_OPERATOR_DEBUG
+          value: "false"
+        ports:
+        - containerPort: 8080
+          name: metrics
+          protocol: TCP
+        - containerPort: 8081
+          name: health
+          protocol: TCP
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: health
+          initialDelaySeconds: 15
+          periodSeconds: 20
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: health
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+      terminationGracePeriodSeconds: 10

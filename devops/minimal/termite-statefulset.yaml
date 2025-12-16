@@ -1,0 +1,280 @@
+# Termite ML Service on GKE TPU - Minimal Deployment
+#
+# This StatefulSet deploys Termite with GoMLX XLA backend for TPU acceleration.
+# Models are pulled from registry.antfly.io (R2-backed) via init container.
+#
+# Prerequisites:
+#   - GKE cluster with TPU node pool (see cluster-setup.sh)
+#   - TPU v5e recommended for inference workloads
+#   - Docker images built from termite/Dockerfile.termite and termite/Dockerfile.termite-xla
+#
+# Usage:
+#   kubectl apply -f termite-statefulset.yaml
+#
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: termite-operator-namespace
+  labels:
+    app.kubernetes.io/name: termite
+    app.kubernetes.io/component: ml-inference
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: termite-config
+  namespace: termite-operator-namespace
+data:
+  # Models to pull from registry (format: "model1,model2:quantized,model3")
+  # Update this to change model set without rebuilding deployment
+  TERMITE_MODELS: "bge-small-en-v1.5,mxbai-rerank-base-v2:quantized,chonky-mmbert"
+
+  # Registry configuration
+  ANTFLY_REGISTRY_URL: "https://registry.antfly.io/v1"
+
+  # XLA/TPU configuration
+  GOMLX_BACKEND: "xla:tpu"
+
+  # Model directories (relative to /models volume)
+  TERMITE_EMBEDDER_MODELS_DIR: "/models/embedders"
+  TERMITE_CHUNKER_MODELS_DIR: "/models/chunkers"
+  TERMITE_RERANKER_MODELS_DIR: "/models/rerankers"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: termite-tpu
+  namespace: termite-operator-namespace
+  labels:
+    app.kubernetes.io/name: termite
+    app.kubernetes.io/component: ml-inference
+    accelerator: tpu
+spec:
+  clusterIP: None  # Headless service for StatefulSet
+  selector:
+    app.kubernetes.io/name: termite
+    accelerator: tpu
+  ports:
+    - name: api
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: termite-tpu-lb
+  namespace: termite-operator-namespace
+  labels:
+    app.kubernetes.io/name: termite
+    app.kubernetes.io/component: ml-inference
+    accelerator: tpu
+spec:
+  type: ClusterIP  # Use LoadBalancer for external access
+  selector:
+    app.kubernetes.io/name: termite
+    accelerator: tpu
+  ports:
+    - name: api
+      port: 80
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: termite-tpu
+  namespace: termite-operator-namespace
+  labels:
+    app.kubernetes.io/name: termite
+    app.kubernetes.io/component: ml-inference
+    accelerator: tpu
+spec:
+  serviceName: termite-tpu
+  replicas: 1  # TPU slice is atomic unit; scale via HPA or multiple StatefulSets
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: termite
+      accelerator: tpu
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: termite
+        app.kubernetes.io/component: ml-inference
+        accelerator: tpu
+    spec:
+      # TPU node selection - ct5lp-hightpu-4t has 4 TPU v5e chips
+      nodeSelector:
+        cloud.google.com/gke-tpu-accelerator: tpu-v5-lite-podslice
+        cloud.google.com/gke-tpu-topology: "2x2"
+
+      # Tolerate TPU node taint
+      tolerations:
+        - key: "google.com/tpu"
+          operator: "Exists"
+          effect: "NoSchedule"
+
+      # Ensure pods are spread across TPU slices if scaling
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: cloud.google.com/gke-nodepool
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: termite
+
+      # Init container pulls models from R2-backed registry
+      initContainers:
+        - name: model-puller
+          image: ghcr.io/antflydb/termite:latest
+          imagePullPolicy: Always
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              echo "Pulling models from registry: $ANTFLY_REGISTRY_URL"
+
+              # Parse TERMITE_MODELS (format: "model1,model2:quantized,model3")
+              IFS=',' read -ra MODELS <<< "$TERMITE_MODELS"
+              for model in "${MODELS[@]}"; do
+                echo "Processing: $model"
+                if [[ "$model" == *":quantized"* ]]; then
+                  name="${model%:quantized}"
+                  echo "Pulling quantized model: $name"
+                  /termite pull "$name" --quantized --models-dir /models
+                else
+                  echo "Pulling model: $model"
+                  /termite pull "$model" --models-dir /models
+                fi
+              done
+
+              echo "Model pull complete. Contents:"
+              find /models -type f -name "*.onnx" | head -20
+          envFrom:
+            - configMapRef:
+                name: termite-config
+          volumeMounts:
+            - name: models
+              mountPath: /models
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "500m"
+            limits:
+              memory: "2Gi"
+              cpu: "2"
+
+      containers:
+        - name: termite
+          image: ghcr.io/antflydb/termite:xla-tpu
+          imagePullPolicy: Always
+          # Entrypoint is /termite, default CMD is "run"
+          # API URL configured via TERMITE_API_URL env var (default: http://0.0.0.0:8080)
+          envFrom:
+            - configMapRef:
+                name: termite-config
+          env:
+            # PJRT plugin path - libtpu.so is pre-installed on GKE TPU nodes
+            - name: PJRT_PLUGIN_LIBRARY_PATH
+              value: "/usr/local/lib/libtpu.so"
+            # XLA compilation cache for faster startup on subsequent runs
+            - name: XLA_FLAGS
+              value: "--xla_dump_to=/tmp/xla_dump"
+
+          # TPU resource requests - must match node's chip count exactly
+          resources:
+            requests:
+              google.com/tpu: 4
+              memory: "8Gi"
+              cpu: "2"
+            limits:
+              google.com/tpu: 4
+              memory: "16Gi"
+              cpu: "4"
+
+          ports:
+            - containerPort: 8080
+              name: api
+              protocol: TCP
+
+          volumeMounts:
+            - name: models
+              mountPath: /models
+              readOnly: true
+            - name: xla-cache
+              mountPath: /tmp/xla_dump
+
+          # Health checks
+          livenessProbe:
+            httpGet:
+              path: /api/models
+              port: 8080
+            initialDelaySeconds: 60  # XLA compilation takes time on first request
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /api/models
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 2
+
+          # Startup probe for slow XLA JIT compilation
+          startupProbe:
+            httpGet:
+              path: /api/models
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 30  # Allow up to 5 minutes for startup
+
+      # Graceful shutdown for in-flight requests
+      terminationGracePeriodSeconds: 30
+
+      volumes:
+        - name: models
+          emptyDir:
+            sizeLimit: 20Gi
+        - name: xla-cache
+          emptyDir:
+            sizeLimit: 1Gi
+---
+# Horizontal Pod Autoscaler for Termite
+# Note: TPU pods scale as atomic units; this creates new StatefulSet replicas
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: termite-tpu-hpa
+  namespace: termite-operator-namespace
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: StatefulSet
+    name: termite-tpu
+  minReplicas: 1
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300  # Wait 5 min before scaling down
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+        - type: Pods
+          value: 2
+          periodSeconds: 60

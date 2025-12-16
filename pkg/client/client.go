@@ -1,0 +1,287 @@
+/*
+Copyright 2025 The Antfly Contributors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+	http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+//go:generate go tool oapi-codegen --config=cfg.yaml ../termite/openapi.yaml
+
+// Package client provides an auto-generated Go SDK client for the Termite API.
+package client
+
+import (
+	"bytes"
+	"context"
+	"encoding/binary"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+
+	externalRef0 "github.com/antflydb/antfly-go/libaf/chunking"
+	"github.com/antflydb/termite/pkg/client/oapi"
+)
+
+// TermiteClient is a client for interacting with the Termite API.
+type TermiteClient struct {
+	client  *oapi.ClientWithResponses
+	baseURL string
+}
+
+// NewTermiteClient creates a new Termite client.
+// The baseURL should be the server address (e.g., "http://localhost:8080").
+// The /api prefix is automatically appended.
+func NewTermiteClient(baseURL string, httpClient *http.Client) (*TermiteClient, error) {
+	// Append /api prefix for the Termite API
+	apiURL := strings.TrimSuffix(baseURL, "/") + "/api"
+
+	var opts []oapi.ClientOption
+	if httpClient != nil {
+		opts = append(opts, oapi.WithHTTPClient(httpClient))
+	}
+
+	client, err := oapi.NewClientWithResponses(apiURL, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return &TermiteClient{
+		client:  client,
+		baseURL: apiURL,
+	}, nil
+}
+
+// Client returns the underlying oapi-codegen client for direct API access.
+func (c *TermiteClient) Client() *oapi.ClientWithResponses {
+	return c.client
+}
+
+// Embed generates embeddings for the given text strings.
+// Returns embeddings in binary format (most efficient).
+func (c *TermiteClient) Embed(ctx context.Context, model string, input []string) ([][]float32, error) {
+	// Build the input union type
+	var inputUnion oapi.EmbedRequest_Input
+	if err := inputUnion.FromEmbedRequestInput1(input); err != nil {
+		return nil, fmt.Errorf("building input: %w", err)
+	}
+
+	req := oapi.EmbedRequest{
+		Model: model,
+		Input: inputUnion,
+	}
+
+	// Make request - server defaults to binary response (most efficient)
+	resp, err := c.client.GenerateEmbeddingsWithResponse(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("sending request: %w", err)
+	}
+
+	// Check for error responses
+	if resp.JSON400 != nil {
+		return nil, fmt.Errorf("bad request: %s", resp.JSON400.Error)
+	}
+	if resp.JSON404 != nil {
+		return nil, fmt.Errorf("model not found: %s", resp.JSON404.Error)
+	}
+	if resp.JSON500 != nil {
+		return nil, fmt.Errorf("server error: %s", resp.JSON500.Error)
+	}
+
+	// Check content type to determine response format
+	contentType := resp.HTTPResponse.Header.Get("Content-Type")
+	if strings.Contains(contentType, "application/json") {
+		// JSON response
+		if resp.JSON200 != nil {
+			return resp.JSON200.Embeddings, nil
+		}
+		return nil, fmt.Errorf("unexpected JSON response: %s", string(resp.Body))
+	}
+
+	// Binary response (default)
+	if resp.StatusCode() != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status code %d: %s", resp.StatusCode(), string(resp.Body))
+	}
+
+	embeddings, err := deserializeFloatArrays(bytes.NewReader(resp.Body))
+	if err != nil {
+		return nil, fmt.Errorf("deserializing embeddings: %w", err)
+	}
+
+	return embeddings, nil
+}
+
+// EmbedJSON generates embeddings and returns JSON response (includes model name).
+func (c *TermiteClient) EmbedJSON(ctx context.Context, model string, input []string) (*oapi.EmbedResponse, error) {
+	var inputUnion oapi.EmbedRequest_Input
+	if err := inputUnion.FromEmbedRequestInput1(input); err != nil {
+		return nil, fmt.Errorf("building input: %w", err)
+	}
+
+	req := oapi.EmbedRequest{
+		Model: model,
+		Input: inputUnion,
+	}
+
+	resp, err := c.client.GenerateEmbeddingsWithResponse(ctx, req, func(ctx context.Context, req *http.Request) error {
+		req.Header.Set("Accept", "application/json")
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("sending request: %w", err)
+	}
+
+	if resp.JSON400 != nil {
+		return nil, fmt.Errorf("bad request: %s", resp.JSON400.Error)
+	}
+	if resp.JSON404 != nil {
+		return nil, fmt.Errorf("model not found: %s", resp.JSON404.Error)
+	}
+	if resp.JSON500 != nil {
+		return nil, fmt.Errorf("server error: %s", resp.JSON500.Error)
+	}
+	if resp.JSON200 == nil {
+		return nil, fmt.Errorf("unexpected status code %d: %s", resp.StatusCode(), string(resp.Body))
+	}
+
+	return resp.JSON200, nil
+}
+
+// ChunkConfig contains configuration for text chunking.
+type ChunkConfig struct {
+	Model         string
+	TargetTokens  int
+	OverlapTokens int
+	Separator     string
+	MaxChunks     int
+	Threshold     float32
+}
+
+// Chunk splits text into smaller segments using semantic or fixed-size chunking.
+func (c *TermiteClient) Chunk(ctx context.Context, text string, config ChunkConfig) ([]externalRef0.Chunk, error) {
+	req := oapi.ChunkRequest{
+		Text: text,
+		Config: oapi.ChunkConfig{
+			Model:         config.Model,
+			TargetTokens:  config.TargetTokens,
+			OverlapTokens: config.OverlapTokens,
+			Separator:     config.Separator,
+			MaxChunks:     config.MaxChunks,
+			Threshold:     config.Threshold,
+		},
+	}
+
+	resp, err := c.client.ChunkTextWithResponse(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("sending request: %w", err)
+	}
+
+	if resp.JSON400 != nil {
+		return nil, fmt.Errorf("bad request: %s", resp.JSON400.Error)
+	}
+	if resp.JSON500 != nil {
+		return nil, fmt.Errorf("server error: %s", resp.JSON500.Error)
+	}
+	if resp.JSON200 == nil {
+		return nil, fmt.Errorf("unexpected status code %d: %s", resp.StatusCode(), string(resp.Body))
+	}
+
+	return resp.JSON200.Chunks, nil
+}
+
+// Rerank re-scores pre-rendered text prompts based on relevance to a query.
+func (c *TermiteClient) Rerank(ctx context.Context, model string, query string, prompts []string) ([]float32, error) {
+	req := oapi.RerankRequest{
+		Model:   model,
+		Query:   query,
+		Prompts: prompts,
+	}
+
+	resp, err := c.client.RerankPromptsWithResponse(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("sending request: %w", err)
+	}
+
+	if resp.JSON400 != nil {
+		return nil, fmt.Errorf("bad request: %s", resp.JSON400.Error)
+	}
+	if resp.JSON404 != nil {
+		return nil, fmt.Errorf("model not found: %s", resp.JSON404.Error)
+	}
+	if resp.JSON500 != nil {
+		return nil, fmt.Errorf("server error: %s", resp.JSON500.Error)
+	}
+	if resp.JSON503 != nil {
+		return nil, fmt.Errorf("service unavailable: %s", resp.JSON503.Error)
+	}
+	if resp.JSON200 == nil {
+		return nil, fmt.Errorf("unexpected status code %d: %s", resp.StatusCode(), string(resp.Body))
+	}
+
+	return resp.JSON200.Scores, nil
+}
+
+// ListModels returns available models for embedding, chunking, and reranking.
+func (c *TermiteClient) ListModels(ctx context.Context) (*oapi.ModelsResponse, error) {
+	resp, err := c.client.ListModelsWithResponse(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("sending request: %w", err)
+	}
+
+	if resp.JSON500 != nil {
+		return nil, fmt.Errorf("server error: %s", resp.JSON500.Error)
+	}
+	if resp.JSON200 == nil {
+		return nil, fmt.Errorf("unexpected status code %d: %s", resp.StatusCode(), string(resp.Body))
+	}
+
+	return resp.JSON200, nil
+}
+
+// GetVersion returns Termite version information.
+func (c *TermiteClient) GetVersion(ctx context.Context) (*oapi.VersionResponse, error) {
+	resp, err := c.client.GetVersionWithResponse(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("sending request: %w", err)
+	}
+
+	if resp.JSON200 == nil {
+		return nil, fmt.Errorf("unexpected status code %d: %s", resp.StatusCode(), string(resp.Body))
+	}
+
+	return resp.JSON200, nil
+}
+
+// deserializeFloatArrays reconstructs a 2D float32 array from binary format.
+// Format: uint64(numVectors) + uint64(dimension) + float32 values in little endian
+func deserializeFloatArrays(r io.Reader) ([][]float32, error) {
+	var numVectors uint64
+	if err := binary.Read(r, binary.LittleEndian, &numVectors); err != nil {
+		return nil, fmt.Errorf("reading number of vectors: %w", err)
+	}
+	if numVectors == 0 {
+		return [][]float32{}, nil
+	}
+	var dimension uint64
+	if err := binary.Read(r, binary.LittleEndian, &dimension); err != nil {
+		return nil, fmt.Errorf("reading dimension: %w", err)
+	}
+	result := make([][]float32, numVectors)
+	for i := range numVectors {
+		result[i] = make([]float32, dimension)
+		for j := range dimension {
+			if err := binary.Read(r, binary.LittleEndian, &result[i][j]); err != nil {
+				return nil, fmt.Errorf("reading vector %d, dimension %d: %w", i, j, err)
+			}
+		}
+	}
+	return result, nil
+}

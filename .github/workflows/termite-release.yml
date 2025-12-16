@@ -1,0 +1,74 @@
+name: Termite Release
+
+on:
+  push:
+    tags:
+      - "termite-v*"  # Triggers on tags like termite-v1.0.0, termite-v0.1.0-rc1
+
+permissions:
+  contents: write      # Required for creating releases
+  packages: write      # Required for container images
+  id-token: write      # Required for keyless OIDC signing
+
+jobs:
+  goreleaser:
+    runs-on: codebuild-GitHubActionsRunnerAntflyAntflyDB-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0  # Required for GoReleaser changelog generation
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.25"
+
+      - name: Install ARM64 cross-compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: "0.15.1"
+
+      - name: Download ONNX Runtime libraries
+        run: |
+          ./scripts/download-onnxruntime.sh
+          echo "ONNXRUNTIME_ROOT=${{ github.workspace }}/onnxruntime" >> $GITHUB_ENV
+
+      - name: Download macOS SDK for cross-compilation
+        run: |
+          # Download macOS SDK for cross-compilation
+          mkdir -p /tmp/macos-sdk
+          curl -fsSL https://github.com/joseluisq/macosx-sdks/releases/download/15.5/MacOSX15.5.sdk.tar.xz | tar -xJf - -C /tmp/macos-sdk
+          echo "SDK_PATH=/tmp/macos-sdk/MacOSX15.5.sdk" >> $GITHUB_ENV
+
+      - name: Extract version from tag
+        run: |
+          # Strip termite- prefix from tag (termite-v1.0.0 -> v1.0.0)
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#termite-}"
+          echo "GORELEASER_CURRENT_TAG=${VERSION}" >> $GITHUB_ENV
+          echo "Extracted version: ${VERSION}"
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "v2.12.0"
+          args: release --clean --skip=validate
+        env:
+          GOWORK: "off"
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+  # Build and publish container images after release
+  publish-container:
+    needs: goreleaser
+    uses: ./.github/workflows/termite-container.yml
+    with:
+      tag_name: ${{ github.ref_name }}
+    secrets: inherit

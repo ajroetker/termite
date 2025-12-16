@@ -1,0 +1,89 @@
+# Write-Heavy Pool Example
+#
+# Optimized for:
+# - Bulk embedding generation during indexing
+# - Semantic chunking of documents
+# - High throughput, latency less critical
+#
+# Characteristics:
+# - Can scale aggressively during bulk imports
+# - Burst mode for handling spikes
+# - Larger TPU topology for throughput
+# - Spot instances for cost savings
+
+apiVersion: antfly.io/v1alpha1
+kind: TermitePool
+metadata:
+  name: write-heavy-indexers
+  namespace: termite-operator-namespace
+spec:
+  workloadType: write-heavy
+
+  image: ghcr.io/antflydb/termite:xla-tpu
+
+  models:
+    preload:
+      - name: bge-small-en-v1.5
+        priority: high
+      - name: chonky-mmbert
+        priority: high        # Semantic chunking
+    loadingStrategy: eager
+    registryURL: "https://registry.antfly.io/v1"
+
+  replicas:
+    min: 1                    # Can scale down during quiet periods
+    max: 15
+
+  hardware:
+    accelerator: tpu-v5-lite-podslice
+    topology: "2x4"           # Larger for throughput
+    machineType: ct5lp-hightpu-8t
+    spot: true                # Use spot for cost savings (batch workload)
+
+  autoscaling:
+    enabled: true
+    metrics:
+      - type: queue-depth
+        target: "50"          # Higher threshold - batch tolerant
+        scaleUp:
+          stabilizationWindow: "15s"
+          policies:
+            - type: Pods
+              value: 4        # Scale up aggressively
+              periodSeconds: 30
+        scaleDown:
+          stabilizationWindow: "120s"
+      - type: requests-per-second
+        target: "1000"
+    modelLoadingGracePeriod: "90s"
+
+  burst:
+    enabled: true
+    maxSurge: 5               # Can burst +5 replicas
+    burstThreshold: 100       # Queue depth trigger
+    cooldownPeriod: "60s"
+
+  resources:
+    requests:
+      memory: "12Gi"
+      cpu: "4"
+      google.com/tpu: "8"
+    limits:
+      memory: "24Gi"
+      cpu: "8"
+      google.com/tpu: "8"
+
+  availability:
+    podDisruptionBudget:
+      maxUnavailable: 2       # Allow rolling updates
+    startupProbe:
+      failureThreshold: 20
+      periodSeconds: 10
+
+  routing:
+    weight: 100
+    drainTimeout: "60s"       # Allow in-flight batch requests to complete
+    circuitBreaker:
+      enabled: true
+      errorThreshold: 10      # Higher threshold for batch
+      timeout: "60s"

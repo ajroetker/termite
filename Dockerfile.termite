@@ -1,0 +1,40 @@
+# Build the termite binary
+FROM golang:1.25-alpine AS builder
+
+WORKDIR /workspace
+
+# Copy the Go Modules manifests
+COPY pkg/termite/go.mod pkg/termite/go.mod
+COPY pkg/termite/go.sum pkg/termite/go.sum
+
+# Copy the go source
+COPY pkg/termite/ pkg/termite/
+
+WORKDIR /workspace/pkg/termite
+
+# Declare build arguments for multi-arch support (automatically provided by Docker Buildx)
+ARG TARGETOS
+ARG TARGETARCH
+
+# Build for the target platform
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -a -o /workspace/termite ./cmd
+
+# Use distroless as minimal base image to package the termite binary
+# Refer to https://github.com/GoogleContainerTools/distroless for more details
+FROM gcr.io/distroless/static:nonroot
+WORKDIR /
+COPY --from=builder /workspace/termite .
+USER 65532:65532
+
+# API server configuration (used by termite run command)
+ENV TERMITE_API_URL="http://0.0.0.0:8080"
+
+# Model directories (mounted at runtime)
+ENV TERMITE_EMBEDDER_MODELS_DIR="/models/embedders"
+ENV TERMITE_CHUNKER_MODELS_DIR="/models/chunkers"
+ENV TERMITE_RERANKER_MODELS_DIR="/models/rerankers"
+
+EXPOSE 8080
+
+ENTRYPOINT ["/termite"]
+CMD ["run"]

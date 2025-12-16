@@ -1,0 +1,126 @@
+# KEDA ScaledObjects for Custom Metrics Autoscaling
+#
+# KEDA provides more flexible autoscaling than HPA, including:
+#   - Scale to zero
+#   - Custom Prometheus metrics
+#   - Multiple trigger types
+#
+# Prerequisites:
+#   - KEDA installed: https://keda.sh/docs/latest/deploy/
+#   - Prometheus installed and scraping termite-proxy metrics
+#
+# Optional: Only apply this file if using KEDA for autoscaling.
+# The TermitePool CRDs also have built-in autoscaling support via the operator.
+#
+---
+# =============================================================================
+# READ-HEAVY POOL AUTOSCALER
+# =============================================================================
+# Scales based on:
+#   - Queue depth (primary trigger)
+#   - P99 latency (secondary trigger)
+
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: read-heavy-embedders-scaler
+  namespace: termite-operator-namespace
+  labels:
+    app.kubernetes.io/name: termite
+    app.kubernetes.io/component: autoscaling
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: StatefulSet
+    name: read-heavy-embedders
+  minReplicaCount: 2
+  maxReplicaCount: 8
+  cooldownPeriod: 300
+  pollingInterval: 15
+  triggers:
+    # Scale on queue depth
+    - type: prometheus
+      metadata:
+        serverAddress: http://prometheus.monitoring:9090
+        metricName: termite_proxy_queue_depth
+        query: |
+          sum(termite_proxy_queue_depth{pool="read-heavy-embedders"})
+        threshold: "10"
+    # Scale on P99 latency
+    - type: prometheus
+      metadata:
+        serverAddress: http://prometheus.monitoring:9090
+        metricName: termite_latency_p99
+        query: |
+          histogram_quantile(0.99,
+            sum(rate(termite_proxy_request_duration_seconds_bucket{pool="read-heavy-embedders"}[1m])) by (le)
+          )
+        threshold: "0.1"
+
+---
+# =============================================================================
+# WRITE-HEAVY POOL AUTOSCALER
+# =============================================================================
+# Scales based on:
+#   - Queue depth (higher threshold for batch tolerance)
+
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: write-heavy-indexers-scaler
+  namespace: termite-operator-namespace
+  labels:
+    app.kubernetes.io/name: termite
+    app.kubernetes.io/component: autoscaling
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: StatefulSet
+    name: write-heavy-indexers
+  minReplicaCount: 1
+  maxReplicaCount: 15
+  cooldownPeriod: 120
+  pollingInterval: 10
+  triggers:
+    - type: prometheus
+      metadata:
+        serverAddress: http://prometheus.monitoring:9090
+        metricName: termite_proxy_queue_depth
+        query: |
+          sum(termite_proxy_queue_depth{pool="write-heavy-indexers"})
+        threshold: "50"
+
+---
+# =============================================================================
+# BURST POOL AUTOSCALER
+# =============================================================================
+# Scales based on:
+#   - Overflow detection (when other pools are saturated)
+# Supports scale-to-zero
+
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: burst-pool-scaler
+  namespace: termite-operator-namespace
+  labels:
+    app.kubernetes.io/name: termite
+    app.kubernetes.io/component: autoscaling
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: StatefulSet
+    name: burst-pool
+  minReplicaCount: 0
+  maxReplicaCount: 20
+  cooldownPeriod: 60
+  pollingInterval: 5
+  triggers:
+    # Scale when other pools are saturated
+    - type: prometheus
+      metadata:
+        serverAddress: http://prometheus.monitoring:9090
+        metricName: termite_overflow_needed
+        query: |
+          sum(termite_proxy_queue_depth{pool=~"read-heavy-embedders|write-heavy-indexers"}) > 100
+        threshold: "1"

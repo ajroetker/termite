@@ -1,0 +1,678 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.19.0
+  name: termitepools.antfly.io
+spec:
+  group: antfly.io
+  names:
+    kind: TermitePool
+    listKind: TermitePoolList
+    plural: termitepools
+    singular: termitepool
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.workloadType
+      name: Workload
+      type: string
+    - jsonPath: .status.replicas.ready
+      name: Ready
+      type: integer
+    - jsonPath: .status.replicas.desired
+      name: Desired
+      type: integer
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: TermitePool is the Schema for the termitepools API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: TermitePoolSpec defines the desired state of TermitePool
+            properties:
+              autoscaling:
+                description: Autoscaling defines autoscaling behavior
+                properties:
+                  enabled:
+                    default: true
+                    description: Enabled toggles autoscaling
+                    type: boolean
+                  metrics:
+                    description: Metrics defines scaling triggers
+                    items:
+                      description: ScalingMetric defines a single scaling trigger
+                      properties:
+                        endpoint:
+                          description: Endpoint is the API endpoint to measure (for
+                            latency metrics)
+                          type: string
+                        scaleDown:
+                          description: ScaleDown defines scale-down behavior
+                          properties:
+                            policies:
+                              description: Policies defines scaling policies
+                              items:
+                                description: ScalingPolicy defines a single scaling
+                                  policy
+                                properties:
+                                  periodSeconds:
+                                    description: PeriodSeconds is the time window
+                                      for this policy
+                                    format: int32
+                                    type: integer
+                                  type:
+                                    description: Type is the policy type (Pods or
+                                      Percent)
+                                    type: string
+                                  value:
+                                    description: Value is the scaling amount
+                                    format: int32
+                                    type: integer
+                                required:
+                                - periodSeconds
+                                - type
+                                - value
+                                type: object
+                              type: array
+                            stabilizationWindow:
+                              description: StabilizationWindow is the time to wait
+                                before scaling
+                              type: string
+                          type: object
+                        scaleUp:
+                          description: ScaleUp defines scale-up behavior
+                          properties:
+                            policies:
+                              description: Policies defines scaling policies
+                              items:
+                                description: ScalingPolicy defines a single scaling
+                                  policy
+                                properties:
+                                  periodSeconds:
+                                    description: PeriodSeconds is the time window
+                                      for this policy
+                                    format: int32
+                                    type: integer
+                                  type:
+                                    description: Type is the policy type (Pods or
+                                      Percent)
+                                    type: string
+                                  value:
+                                    description: Value is the scaling amount
+                                    format: int32
+                                    type: integer
+                                required:
+                                - periodSeconds
+                                - type
+                                - value
+                                type: object
+                              type: array
+                            stabilizationWindow:
+                              description: StabilizationWindow is the time to wait
+                                before scaling
+                              type: string
+                          type: object
+                        target:
+                          description: Target is the target value (interpretation
+                            depends on type)
+                          type: string
+                        type:
+                          description: Type is the metric type
+                          enum:
+                          - queue-depth
+                          - latency-p99
+                          - latency-p95
+                          - requests-per-second
+                          - cpu
+                          - memory
+                          - throughput
+                          type: string
+                      required:
+                      - target
+                      - type
+                      type: object
+                    type: array
+                  modelLoadingGracePeriod:
+                    description: ModelLoadingGracePeriod prevents scale-down during
+                      model loading
+                    type: string
+                  scaleDownStabilization:
+                    description: ScaleDownStabilization is the stabilization window
+                      for scale-down
+                    type: string
+                  warmupReplicas:
+                    description: WarmupReplicas is the number of replicas to pre-warm
+                      before traffic
+                    format: int32
+                    type: integer
+                type: object
+              availability:
+                description: Availability defines availability configuration
+                properties:
+                  livenessProbe:
+                    description: LivenessProbe configuration
+                    properties:
+                      failureThreshold:
+                        description: FailureThreshold is the number of failures before
+                          marking unhealthy
+                        format: int32
+                        type: integer
+                      periodSeconds:
+                        description: PeriodSeconds is the probe interval
+                        format: int32
+                        type: integer
+                      timeoutSeconds:
+                        description: TimeoutSeconds is the probe timeout
+                        format: int32
+                        type: integer
+                    type: object
+                  podDisruptionBudget:
+                    description: PodDisruptionBudget configuration
+                    properties:
+                      enabled:
+                        default: false
+                        description: Enabled indicates if PodDisruptionBudget should
+                          be created
+                        type: boolean
+                      maxUnavailable:
+                        description: MaxUnavailable is the maximum unavailable pods
+                        format: int32
+                        type: integer
+                      minAvailable:
+                        description: MinAvailable is the minimum available pods
+                        format: int32
+                        type: integer
+                    type: object
+                  readinessProbe:
+                    description: ReadinessProbe configuration
+                    properties:
+                      failureThreshold:
+                        description: FailureThreshold is the number of failures before
+                          marking unhealthy
+                        format: int32
+                        type: integer
+                      periodSeconds:
+                        description: PeriodSeconds is the probe interval
+                        format: int32
+                        type: integer
+                      timeoutSeconds:
+                        description: TimeoutSeconds is the probe timeout
+                        format: int32
+                        type: integer
+                    type: object
+                  startupProbe:
+                    description: StartupProbe configuration
+                    properties:
+                      failureThreshold:
+                        description: FailureThreshold is the number of failures before
+                          marking unhealthy
+                        format: int32
+                        type: integer
+                      periodSeconds:
+                        description: PeriodSeconds is the probe interval
+                        format: int32
+                        type: integer
+                      timeoutSeconds:
+                        description: TimeoutSeconds is the probe timeout
+                        format: int32
+                        type: integer
+                    type: object
+                type: object
+              burst:
+                description: Burst defines burst handling configuration
+                properties:
+                  burstThreshold:
+                    default: 100
+                    description: BurstThreshold is the queue depth that triggers burst
+                      mode
+                    format: int32
+                    type: integer
+                  cooldownPeriod:
+                    description: CooldownPeriod is the time before scaling down burst
+                      replicas
+                    type: string
+                  enabled:
+                    description: Enabled toggles burst handling
+                    type: boolean
+                  maxSurge:
+                    default: 5
+                    description: MaxSurge is the maximum extra replicas during burst
+                    format: int32
+                    type: integer
+                required:
+                - enabled
+                type: object
+              config:
+                description: |-
+                  Config is the Termite configuration as a JSON string.
+                  This is merged with auto-generated configuration and passed to termite via --config.
+                  Supports all termite config options including logging, GPU settings, keep_alive, etc.
+                  Example: {"log": {"level": "debug", "style": "json"}, "gpu": "auto"}
+                type: string
+              gke:
+                description: GKE defines GKE-specific configuration for Autopilot
+                  and Standard clusters
+                properties:
+                  autopilot:
+                    description: |-
+                      Autopilot enables GKE Autopilot-specific optimizations.
+                      When true, uses compute class annotations instead of node selectors.
+                    type: boolean
+                  autopilotComputeClass:
+                    description: |-
+                      AutopilotComputeClass specifies the GKE Autopilot compute class.
+                      Valid values: "Accelerator", "Balanced", "Performance", "Scale-Out", "autopilot", "autopilot-spot"
+                      Defaults to "Balanced" when Autopilot=true and this field is empty.
+                      Note: "Accelerator" is for GPU workloads only, NOT TPUs.
+                    enum:
+                    - Accelerator
+                    - Balanced
+                    - Performance
+                    - Scale-Out
+                    - autopilot
+                    - autopilot-spot
+                    - ""
+                    type: string
+                  podDisruptionBudget:
+                    description: PodDisruptionBudget enables automatic PodDisruptionBudget
+                      creation
+                    properties:
+                      enabled:
+                        default: false
+                        description: Enabled indicates if PodDisruptionBudget should
+                          be created
+                        type: boolean
+                      maxUnavailable:
+                        description: MaxUnavailable is the maximum unavailable pods
+                        format: int32
+                        type: integer
+                      minAvailable:
+                        description: MinAvailable is the minimum available pods
+                        format: int32
+                        type: integer
+                    type: object
+                type: object
+              hardware:
+                description: Hardware defines TPU/accelerator configuration
+                properties:
+                  accelerator:
+                    default: tpu-v5-lite-podslice
+                    description: Accelerator is the accelerator type label
+                    type: string
+                  machineType:
+                    description: MachineType is the GKE machine type
+                    type: string
+                  spot:
+                    default: false
+                    description: Spot enables spot/preemptible instances
+                    type: boolean
+                  topology:
+                    default: 2x2
+                    description: Topology is the TPU topology (e.g., "2x2", "2x4")
+                    type: string
+                type: object
+              image:
+                description: Image is the Termite container image
+                type: string
+              imagePullSecrets:
+                description: ImagePullSecrets for private registries
+                items:
+                  description: |-
+                    LocalObjectReference contains enough information to let you locate the
+                    referenced object inside the same namespace.
+                  properties:
+                    name:
+                      default: ""
+                      description: |-
+                        Name of the referent.
+                        This field is effectively required, but due to backwards compatibility is
+                        allowed to be empty. Instances of this type with an empty value here are
+                        almost certainly wrong.
+                        More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                      type: string
+                  type: object
+                  x-kubernetes-map-type: atomic
+                type: array
+              models:
+                description: Models defines which models to load and how
+                properties:
+                  keepAlive:
+                    description: KeepAlive duration before unloading idle models (for
+                      lazy strategy)
+                    type: string
+                  loadingStrategy:
+                    default: eager
+                    description: LoadingStrategy defines how models are loaded
+                    enum:
+                    - eager
+                    - lazy
+                    - bounded
+                    type: string
+                  maxLoadedModels:
+                    description: MaxLoadedModels limits concurrent loaded models (for
+                      bounded strategy)
+                    type: integer
+                  preload:
+                    description: Preload lists models to preload on this pool
+                    items:
+                      description: ModelSpec defines a single model to load
+                      properties:
+                        name:
+                          description: Name is the model name (e.g., "bge-small-en-v1.5")
+                          type: string
+                        priority:
+                          default: medium
+                          description: Priority determines loading order and eviction
+                            priority
+                          enum:
+                          - high
+                          - medium
+                          - low
+                          type: string
+                        strategy:
+                          description: |-
+                            Strategy overrides the pool-level loading strategy for this model.
+                            If not specified, uses the pool's loadingStrategy.
+                          enum:
+                          - eager
+                          - lazy
+                          - bounded
+                          type: string
+                        variant:
+                          description: Variant specifies a model variant (e.g., "quantized")
+                          type: string
+                      required:
+                      - name
+                      type: object
+                    type: array
+                  registryURL:
+                    description: RegistryURL is the model registry URL
+                    type: string
+                required:
+                - preload
+                type: object
+              replicas:
+                description: Replicas defines scaling bounds
+                properties:
+                  max:
+                    description: Max is the maximum number of replicas
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  min:
+                    description: Min is the minimum number of replicas
+                    format: int32
+                    minimum: 0
+                    type: integer
+                  perModel:
+                    additionalProperties:
+                      description: PerModelReplica defines per-model replica requirements
+                      properties:
+                        min:
+                          description: Min replicas that must have this model loaded
+                          format: int32
+                          type: integer
+                      required:
+                      - min
+                      type: object
+                    description: PerModel allows per-model minimum replicas
+                    type: object
+                required:
+                - max
+                - min
+                type: object
+              resources:
+                description: Resources defines compute resource requirements
+                properties:
+                  claims:
+                    description: |-
+                      Claims lists the names of resources, defined in spec.resourceClaims,
+                      that are used by this container.
+
+                      This field depends on the
+                      DynamicResourceAllocation feature gate.
+
+                      This field is immutable. It can only be set for containers.
+                    items:
+                      description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                      properties:
+                        name:
+                          description: |-
+                            Name must match the name of one entry in pod.spec.resourceClaims of
+                            the Pod where this field is used. It makes that resource available
+                            inside a container.
+                          type: string
+                        request:
+                          description: |-
+                            Request is the name chosen for a request in the referenced claim.
+                            If empty, everything from the claim is made available, otherwise
+                            only the result of this request.
+                          type: string
+                      required:
+                      - name
+                      type: object
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                  limits:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: |-
+                      Limits describes the maximum amount of compute resources allowed.
+                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                    type: object
+                  requests:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: |-
+                      Requests describes the minimum amount of compute resources required.
+                      If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                      otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                    type: object
+                type: object
+              routing:
+                description: Routing defines routing hints for the proxy
+                properties:
+                  circuitBreaker:
+                    description: CircuitBreaker configuration
+                    properties:
+                      enabled:
+                        description: Enabled toggles circuit breaker
+                        type: boolean
+                      errorThreshold:
+                        default: 5
+                        description: ErrorThreshold is the error count to open circuit
+                        format: int32
+                        type: integer
+                      timeout:
+                        description: Timeout is the circuit breaker timeout
+                        type: string
+                    required:
+                    - enabled
+                    type: object
+                  drainTimeout:
+                    description: DrainTimeout is the time to drain before termination
+                    type: string
+                  weight:
+                    default: 100
+                    description: Weight is the relative routing weight (0-100)
+                    format: int32
+                    maximum: 100
+                    minimum: 0
+                    type: integer
+                type: object
+              workloadType:
+                default: general
+                description: WorkloadType classifies this pool for routing decisions
+                enum:
+                - read-heavy
+                - write-heavy
+                - burst
+                - general
+                type: string
+            required:
+            - hardware
+            - models
+            - replicas
+            type: object
+          status:
+            description: TermitePoolStatus defines the observed state of TermitePool
+            properties:
+              conditions:
+                description: Conditions represent the latest available observations
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              endpoints:
+                description: Endpoints lists the current Termite endpoints
+                items:
+                  type: string
+                type: array
+              lastScaleTime:
+                description: LastScaleTime is the last time the pool scaled
+                format: date-time
+                type: string
+              loadedModels:
+                description: LoadedModels shows which models are loaded and where
+                items:
+                  description: LoadedModelStatus shows model loading status
+                  properties:
+                    avgLoadTimeMs:
+                      description: AvgLoadTimeMs is the average model load time
+                      format: int64
+                      type: integer
+                    name:
+                      description: Name is the model name
+                      type: string
+                    replicas:
+                      description: Replicas is the number of replicas with this model
+                      format: int32
+                      type: integer
+                    status:
+                      description: Status is the model status (loaded, loading, error)
+                      type: string
+                  required:
+                  - name
+                  - replicas
+                  type: object
+                type: array
+              phase:
+                description: Phase is the current phase of the pool
+                type: string
+              replicas:
+                description: Replicas shows replica counts
+                properties:
+                  desired:
+                    description: Desired is the desired number of replicas
+                    format: int32
+                    type: integer
+                  ready:
+                    description: Ready is the number of ready replicas
+                    format: int32
+                    type: integer
+                  total:
+                    description: Total is the total number of replicas
+                    format: int32
+                    type: integer
+                required:
+                - desired
+                - ready
+                - total
+                type: object
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      scale:
+        labelSelectorPath: .status.selector
+        specReplicasPath: .spec.replicas.min
+        statusReplicasPath: .status.replicas.ready
+      status: {}

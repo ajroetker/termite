@@ -1,0 +1,76 @@
+# Burst Pool Example
+#
+# Optimized for:
+# - Handling traffic spikes
+# - Overflow when primary pools are saturated
+# - Scale-to-zero when not needed
+#
+# Characteristics:
+# - Smallest TPU for fast provisioning
+# - Spot instances for cost
+# - Aggressive scale-up, fast scale-down
+
+apiVersion: antfly.io/v1alpha1
+kind: TermitePool
+metadata:
+  name: burst-pool
+  namespace: termite-operator-namespace
+spec:
+  workloadType: burst
+
+  image: ghcr.io/antflydb/termite:xla-tpu
+
+  models:
+    preload:
+      - name: bge-small-en-v1.5
+        priority: high        # Only the most common model
+    loadingStrategy: eager
+    registryURL: "https://registry.antfly.io/v1"
+
+  replicas:
+    min: 0                    # Scale to zero when idle
+    max: 20
+
+  hardware:
+    accelerator: tpu-v5-lite-podslice
+    topology: "1x1"           # Smallest, fastest to provision
+    machineType: ct5lp-hightpu-1t
+    spot: true                # Cost savings
+
+  autoscaling:
+    enabled: true
+    metrics:
+      - type: queue-depth
+        target: "5"           # Low threshold - react quickly
+        scaleUp:
+          stabilizationWindow: "0s"  # Immediate
+          policies:
+            - type: Pods
+              value: 5
+              periodSeconds: 15
+        scaleDown:
+          stabilizationWindow: "60s"  # Fast scale-down
+    modelLoadingGracePeriod: "60s"
+
+  resources:
+    requests:
+      memory: "4Gi"
+      cpu: "1"
+      google.com/tpu: "1"
+    limits:
+      memory: "8Gi"
+      cpu: "2"
+      google.com/tpu: "1"
+
+  availability:
+    startupProbe:
+      failureThreshold: 12    # 2 min for smaller model
+      periodSeconds: 10
+
+  routing:
+    weight: 50                # Lower priority than primary pools
+    drainTimeout: "15s"
+    circuitBreaker:
+      enabled: true
+      errorThreshold: 3
+      timeout: "15s"
