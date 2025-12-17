@@ -45,6 +45,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Clone antfly-go (for OpenAPI refs)
+        run: git clone --depth 1 https://github.com/antflydb/antfly-go.git ../antfly-go
+
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
